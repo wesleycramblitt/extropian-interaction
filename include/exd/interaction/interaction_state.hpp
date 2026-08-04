@@ -60,6 +60,7 @@ private:
     std::unordered_set<VisualId> selected_;
     std::string currentActionId_;
     math::Vec3f dragStart_ = {};
+    math::Vec3f resizeStart_ = {};
     bool isModifierDown_ = false;
 };
 

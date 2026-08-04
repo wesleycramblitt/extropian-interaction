@@ -3,9 +3,11 @@
 #include <exd/interaction/event.hpp>
 
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
 #include <string>
 #include <functional>
+#include <optional>
 
 namespace exd::interaction
 {
@@ -54,6 +56,14 @@ public:
     using FilterFn = std::function<bool(VisualId)>;
     void setViewFilter(const std::string& viewId, FilterFn filter);
     void clearViewFilter(const std::string& viewId);
+    bool hasViewFilter(const std::string& viewId) const;
+    bool applyViewFilter(const std::string& viewId, VisualId visualId) const;
+
+    /// Store resolved brushed visuals for a view (caller resolves spatial membership).
+    void setBrushedVisuals(const std::string& viewId, const std::unordered_set<VisualId>& visuals);
+
+    /// Retrieve stored brush range, or nullopt if not set.
+    std::optional<std::pair<double, double>> getBrushRange(const std::string& viewId, const std::string& axisId) const;
 
     /// Call after selection/filter changes to propagate to synced views.
     /// Returns the viewIds that need updating.
@@ -63,7 +73,12 @@ public:
     void reset();
 
 private:
+    struct BrushRange { double min = 0.0; double max = 0.0; };
+
     std::unordered_map<std::string, ViewConfig> views_;
+    std::unordered_map<std::string, std::unordered_map<std::string, BrushRange>> brushRanges_;
+    std::unordered_map<std::string, std::unordered_set<VisualId>> brushedVisuals_;
+    std::unordered_map<std::string, FilterFn> viewFilters_;
     std::unordered_set<VisualId> sharedSelection_;
     double sharedTime_ = 0.0;
 };

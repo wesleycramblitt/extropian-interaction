@@ -110,4 +110,13 @@ private:
     uint64_t nextToken_ = 1;
 };
 
+// ── Transform application ──
+
+/// Apply a scalar transform to a single value.
+double applyTransform(TransformKind kind, const std::vector<double>& args, double value);
+
+/// Apply a transform to a full series (element-wise or aggregate).
+std::vector<double> applyTransformSeries(TransformKind kind, const std::vector<double>& args,
+                                         const std::vector<double>& series);
+
 }  // namespace exd::interaction

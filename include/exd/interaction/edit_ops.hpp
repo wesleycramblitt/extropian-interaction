@@ -19,10 +19,19 @@ class IDocument
 public:
     virtual ~IDocument() = default;
     virtual void setText(VisualId id, const std::string& text) = 0;
+    virtual std::string getText(VisualId id) = 0;
     virtual void resizeVisual(VisualId id, float w, float h) = 0;
     virtual void moveVisual(VisualId id, float x, float y) = 0;
     virtual void setParent(VisualId child, VisualId parent) = 0;
     virtual void markDirty(VisualId id) = 0;
+
+    // Chart data operations
+    virtual void appendDataPoint(VisualId id, uint32_t seriesIndex, double x, double y) = 0;
+    virtual void removeDataPoint(VisualId id, uint32_t seriesIndex, uint32_t pointIndex) = 0;
+    virtual void insertDataPoint(VisualId id, uint32_t seriesIndex, uint32_t pointIndex, double x, double y) = 0;
+    virtual void reorderSeries(VisualId id, uint32_t fromIndex, uint32_t toIndex) = 0;
+    virtual uint32_t getSeriesSize(VisualId id, uint32_t seriesIndex) const = 0;
+    virtual std::pair<double, double> getDataPoint(VisualId id, uint32_t seriesIndex, uint32_t pointIndex) const = 0;
 };
 
 // ── Concrete edit commands ──
@@ -114,6 +123,8 @@ private:
     VisualId visualId_;
     uint32_t seriesIndex_;
     uint32_t pointIndex_;
+    double savedX_ = 0.0;
+    double savedY_ = 0.0;
 };
 
 /// Reorder chart series.

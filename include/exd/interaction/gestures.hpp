@@ -61,9 +61,10 @@ public:
     double accumulatedDistance() const;
 
     /// Thresholds
-    void setDragThreshold(float pixels)  { dragThreshold_ = pixels; }
-    void setTapTimeoutMs(double ms)     { tapTimeoutMs_ = ms; }
-    void setDoubleTapWindowMs(double ms) { doubleTapWindowMs_ = ms; }
+    void setDragThreshold(float pixels)      { dragThreshold_ = pixels; }
+    void setTapTimeoutMs(double ms)          { tapTimeoutMs_ = ms; }
+    void setDoubleTapWindowMs(double ms)     { doubleTapWindowMs_ = ms; }
+    void setLongPressTimeoutMs(double ms)    { longPressTimeoutMs_ = ms; }
 
 private:
     GesturePhase phase_ = GesturePhase::Idle;
@@ -75,6 +76,7 @@ private:
     float dragThreshold_ = 5.0f;
     double tapTimeoutMs_ = 250.0;
     double doubleTapWindowMs_ = 300.0;
+    double longPressTimeoutMs_ = 500.0;
     double lastTapTimeMs_ = -1000.0;   // time of last completed tap
     int tapCount_ = 0;
     bool moved_ = false;

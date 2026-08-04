@@ -40,6 +40,13 @@ struct DataSource
 /// Called when a source value changes. The path identifies the source.
 using DataChangeCallback = std::function<void(const std::string& path, const DataSource& source)>;
 
+/// Per-listener state: stores the subscribed path prefix and the callback.
+struct ListenerEntry
+{
+    std::string path;       ///< Subscribed path prefix (or "*" for all).
+    DataChangeCallback callback;
+};
+
 // ── Data graph ──
 
 /// Registry of data sources. Sources are addressed by stable path strings.
@@ -78,6 +85,9 @@ public:
     double getScalar(const std::string& path, double defaultValue = 0.0) const;
 
     /// Register a listener for changes to a path subtree.
+    /// The path is a prefix: subscribing to "/sources/revenue" receives
+    /// notifications for "/sources/revenue", "/sources/revenue/2024", etc.
+    /// Use "*" to match all paths.
     /// Returns a token that can be used to unregister.
     uint64_t subscribe(const std::string& path, DataChangeCallback callback);
 
@@ -96,7 +106,7 @@ public:
 
 private:
     std::unordered_map<std::string, DataSource> sources_;
-    std::unordered_map<uint64_t, DataChangeCallback> listeners_;
+    std::unordered_map<uint64_t, ListenerEntry> listeners_;
     uint64_t nextToken_ = 1;
 };
 

@@ -81,10 +81,10 @@ double DataGraph::getScalar(const std::string& path, double defaultValue) const
     return defaultValue;
 }
 
-uint64_t DataGraph::subscribe(const std::string& /*path*/, DataChangeCallback callback)
+uint64_t DataGraph::subscribe(const std::string& path, DataChangeCallback callback)
 {
     uint64_t token = nextToken_++;
-    listeners_[token] = std::move(callback);
+    listeners_[token] = ListenerEntry{path, std::move(callback)};
     return token;
 }
 
@@ -95,11 +95,14 @@ void DataGraph::unsubscribe(uint64_t token)
 
 void DataGraph::notify(const std::string& path)
 {
-    for (auto& [token, cb] : listeners_)
+    auto it = sources_.find(path);
+    if (it == sources_.end()) return;
+
+    for (auto& [token, entry] : listeners_)
     {
-        auto it = sources_.find(path);
-        if (it != sources_.end())
-            cb(path, it->second);
+        // "*" matches everything; otherwise check prefix.
+        if (entry.path == "*" || path.rfind(entry.path, 0) == 0)
+            entry.callback(path, it->second);
     }
 }
 

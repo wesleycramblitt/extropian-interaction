@@ -91,12 +91,49 @@ CameraPose orbitCamera(
     float deltaAzimuth,
     float deltaElevation)
 {
-    // Simple orbit: rotate position around target in XZ plane (azimuth)
-    // and tilt (elevation). Returns result for caller to apply.
-    // TODO: full rotation math
     CameraPose result = current;
-    (void)deltaAzimuth;
-    (void)deltaElevation;
+
+    // Vector from target to camera position
+    math::Vec3f dir = current.position - current.target;
+    float dirLen = dir.length();
+    if (dirLen < 1e-8f) {
+        return result;  // degenerate: position == target, nothing to orbit
+    }
+
+    // ── Azimuth: rotate dir around world up (Y) in the XZ plane ──
+    float cosA = std::cos(deltaAzimuth);
+    float sinA = std::sin(deltaAzimuth);
+    float newX = dir.x * cosA - dir.z * sinA;
+    float newZ = dir.x * sinA + dir.z * cosA;
+    dir.x = newX;
+    dir.z = newZ;
+    // Y unchanged by azimuth
+
+    // ── Elevation: tilt dir toward/away from the up vector ──
+    // Compute the current elevation angle from the XZ plane, then add delta.
+    float hLen = std::sqrt(dir.x * dir.x + dir.z * dir.z);
+    float currentElev = std::atan2(dir.y, hLen);
+    float newElev = currentElev + deltaElevation;
+
+    // Clamp elevation to avoid flipping past straight up/down.
+    // Clamp sin(newElev) so |dir.y| <= 0.99 * dirLen.
+    float sinElev = std::sin(newElev);
+    sinElev = std::clamp(sinElev, -0.99f, 0.99f);
+    float cosElev = std::sqrt(1.0f - sinElev * sinElev);
+
+    // Reconstruct dir with the new elevation angle, preserving XZ direction.
+    dir.y = dirLen * sinElev;
+    if (hLen > 1e-8f) {
+        float scale = (dirLen * cosElev) / hLen;
+        dir.x *= scale;
+        dir.z *= scale;
+    } else {
+        // dir was nearly vertical; pick an arbitrary XZ direction (preserve previous XZ if possible)
+        dir.x = dirLen * cosElev;
+        dir.z = 0.0f;
+    }
+
+    result.position = result.target + dir;
     return result;
 }
 

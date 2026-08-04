@@ -1,9 +1,113 @@
 #include <exd/interaction/binding.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <numeric>
 
 namespace exd::interaction
 {
+
+// ── Transform application ──
+
+double applyTransform(TransformKind kind, const std::vector<double>& args, double value)
+{
+    switch (kind)
+    {
+        case TransformKind::None:
+            return value;
+
+        case TransformKind::Scale:
+            if (args.empty()) return value;
+            return value * args[0];
+
+        case TransformKind::Clamp:
+            if (args.size() < 2) return value;
+            return std::clamp(value, args[0], args[1]);
+
+        case TransformKind::Normalize:
+            if (args.size() < 4) return value;
+            {
+                double inMin  = args[0];
+                double inMax  = args[1];
+                double outMin = args[2];
+                double outMax = args[3];
+                double range  = inMax - inMin;
+                if (range == 0.0) return outMin;
+                return outMin + (value - inMin) / range * (outMax - outMin);
+            }
+
+        case TransformKind::ElementWise:
+        case TransformKind::Aggregate:
+            // These only make sense on series; passthrough for scalar.
+            return value;
+    }
+    return value;
+}
+
+std::vector<double> applyTransformSeries(TransformKind kind, const std::vector<double>& args,
+                                          const std::vector<double>& series)
+{
+    switch (kind)
+    {
+        case TransformKind::None:
+            return series;
+
+        case TransformKind::Scale:
+        case TransformKind::Clamp:
+        case TransformKind::Normalize:
+            // Apply scalar transform per-element.
+            {
+                std::vector<double> result;
+                result.reserve(series.size());
+                for (double v : series)
+                    result.push_back(applyTransform(kind, args, v));
+                return result;
+            }
+
+        case TransformKind::ElementWise:
+            // args[0] = sub-transform kind (as double), args[1..N] = sub-transform args.
+            if (args.empty()) return series;
+            {
+                auto subKind = static_cast<TransformKind>(static_cast<int>(args[0]));
+                std::vector<double> subArgs(args.begin() + 1, args.end());
+                std::vector<double> result;
+                result.reserve(series.size());
+                for (double v : series)
+                    result.push_back(applyTransform(subKind, subArgs, v));
+                return result;
+            }
+
+        case TransformKind::Aggregate:
+            {
+                if (series.empty()) return {};
+                if (args.empty()) return {};
+                int op = static_cast<int>(args[0]);
+                double result = 0.0;
+                switch (op)
+                {
+                    case 0: // sum
+                        result = std::accumulate(series.begin(), series.end(), 0.0);
+                        break;
+                    case 1: // avg
+                        result = std::accumulate(series.begin(), series.end(), 0.0) / static_cast<double>(series.size());
+                        break;
+                    case 2: // min
+                        result = *std::min_element(series.begin(), series.end());
+                        break;
+                    case 3: // max
+                        result = *std::max_element(series.begin(), series.end());
+                        break;
+                    default:
+                        result = series[0];
+                        break;
+                }
+                return { result };
+            }
+    }
+    return series;
+}
+
+// ── BindingRegistry ──
 
 BindingRegistry::BindingRegistry(DataGraph& graph)
     : graph_(graph)
@@ -48,13 +152,28 @@ std::vector<ResolvedField> BindingRegistry::resolveForSource(const std::string& 
         if (!src->series.empty())
         {
             if (entry.binding.index < 0)
-                field.value = src->series;
+            {
+                field.value = applyTransformSeries(
+                    entry.binding.transform.kind,
+                    entry.binding.transform.args,
+                    src->series);
+            }
             else if (static_cast<size_t>(entry.binding.index) < src->series.size())
-                field.value = src->series[static_cast<size_t>(entry.binding.index)];
+            {
+                double v = applyTransform(
+                    entry.binding.transform.kind,
+                    entry.binding.transform.args,
+                    src->series[static_cast<size_t>(entry.binding.index)]);
+                field.value = v;
+            }
         }
-        else if (src->scalar)
+        else if (src->scalar && std::holds_alternative<double>(*src->scalar))
         {
-            field.value = std::get<double>(*src->scalar);
+            double v = applyTransform(
+                entry.binding.transform.kind,
+                entry.binding.transform.args,
+                std::get<double>(*src->scalar));
+            field.value = v;
         }
 
         results.push_back(std::move(field));
@@ -78,13 +197,28 @@ std::vector<ResolvedField> BindingRegistry::resolveForVisual(VisualId visualId)
         if (!src->series.empty())
         {
             if (entry.binding.index < 0)
-                field.value = src->series;
+            {
+                field.value = applyTransformSeries(
+                    entry.binding.transform.kind,
+                    entry.binding.transform.args,
+                    src->series);
+            }
             else if (static_cast<size_t>(entry.binding.index) < src->series.size())
-                field.value = src->series[static_cast<size_t>(entry.binding.index)];
+            {
+                double v = applyTransform(
+                    entry.binding.transform.kind,
+                    entry.binding.transform.args,
+                    src->series[static_cast<size_t>(entry.binding.index)]);
+                field.value = v;
+            }
         }
-        else if (src->scalar)
+        else if (src->scalar && std::holds_alternative<double>(*src->scalar))
         {
-            field.value = std::get<double>(*src->scalar);
+            double v = applyTransform(
+                entry.binding.transform.kind,
+                entry.binding.transform.args,
+                std::get<double>(*src->scalar));
+            field.value = v;
         }
 
         results.push_back(std::move(field));

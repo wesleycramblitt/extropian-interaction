@@ -8,7 +8,9 @@ namespace exd::interaction
 
 EditTextCommand::EditTextCommand(IDocument& doc, VisualId visualId, std::string newText)
     : doc_(doc), visualId_(visualId), newText_(std::move(newText))
-{}
+{
+    oldText_ = doc_.getText(visualId_);
+}
 
 void EditTextCommand::execute()  { doc_.setText(visualId_, newText_); doc_.markDirty(visualId_); }
 void EditTextCommand::undo()     { doc_.setText(visualId_, oldText_); doc_.markDirty(visualId_); }
@@ -86,18 +88,41 @@ AppendDataPointCommand::AppendDataPointCommand(
     : doc_(doc), visualId_(visualId), seriesIndex_(seriesIndex), x_(x), y_(y)
 {}
 
-void AppendDataPointCommand::execute() { /* TODO: patch chart descriptor */ doc_.markDirty(visualId_); }
-void AppendDataPointCommand::undo()    { /* TODO: remove last point */ doc_.markDirty(visualId_); }
+void AppendDataPointCommand::execute()
+{
+    doc_.appendDataPoint(visualId_, seriesIndex_, x_, y_);
+    doc_.markDirty(visualId_);
+}
+
+void AppendDataPointCommand::undo()
+{
+    uint32_t lastIdx = doc_.getSeriesSize(visualId_, seriesIndex_) - 1;
+    doc_.removeDataPoint(visualId_, seriesIndex_, lastIdx);
+    doc_.markDirty(visualId_);
+}
 
 // ── RemoveDataPointCommand ──
 
 RemoveDataPointCommand::RemoveDataPointCommand(
     IDocument& doc, VisualId visualId, uint32_t seriesIndex, uint32_t pointIndex)
     : doc_(doc), visualId_(visualId), seriesIndex_(seriesIndex), pointIndex_(pointIndex)
-{}
+{
+    auto [x, y] = doc_.getDataPoint(visualId_, seriesIndex_, pointIndex_);
+    savedX_ = x;
+    savedY_ = y;
+}
 
-void RemoveDataPointCommand::execute() { /* TODO: remove from chart series */ doc_.markDirty(visualId_); }
-void RemoveDataPointCommand::undo()    { /* TODO: re‑insert */ doc_.markDirty(visualId_); }
+void RemoveDataPointCommand::execute()
+{
+    doc_.removeDataPoint(visualId_, seriesIndex_, pointIndex_);
+    doc_.markDirty(visualId_);
+}
+
+void RemoveDataPointCommand::undo()
+{
+    doc_.insertDataPoint(visualId_, seriesIndex_, pointIndex_, savedX_, savedY_);
+    doc_.markDirty(visualId_);
+}
 
 // ── ReorderSeriesCommand ──
 
@@ -106,7 +131,16 @@ ReorderSeriesCommand::ReorderSeriesCommand(
     : doc_(doc), visualId_(visualId), fromIndex_(fromIndex), toIndex_(toIndex)
 {}
 
-void ReorderSeriesCommand::execute() { /* TODO: reorder chart series */ doc_.markDirty(visualId_); }
-void ReorderSeriesCommand::undo()    { /* TODO: swap back */ doc_.markDirty(visualId_); }
+void ReorderSeriesCommand::execute()
+{
+    doc_.reorderSeries(visualId_, fromIndex_, toIndex_);
+    doc_.markDirty(visualId_);
+}
+
+void ReorderSeriesCommand::undo()
+{
+    doc_.reorderSeries(visualId_, toIndex_, fromIndex_);
+    doc_.markDirty(visualId_);
+}
 
 }  // namespace exd::interaction

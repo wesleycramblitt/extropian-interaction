@@ -13,6 +13,20 @@ std::optional<GestureKind> GestureRecognizer::feed(const PointerEvent& event, do
     totalTimeMs_ += dt;
     elapsedMs_ += dt;
 
+    // LongPress timeout: if still in Possible and holding within drag threshold
+    if (phase_ == GesturePhase::Possible && elapsedMs_ > longPressTimeoutMs_ && event.type != PointerEvent::Type::Down)
+    {
+        float dist = (event.position - startPosition_).length();
+        if (dist <= dragThreshold_)
+        {
+            lastPosition_ = event.position;
+            currentGesture_ = GestureKind::LongPress;
+            phase_ = GesturePhase::Ended;
+            tapCount_ = 0;
+            return currentGesture_;
+        }
+    }
+
     switch (event.type)
     {
     case PointerEvent::Type::Down:
