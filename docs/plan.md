@@ -280,3 +280,130 @@ tests/unit/
 - **WASM‑safe.** Depends only on libraries that compile cleanly to WASM.
 - **Inject dependencies.** `IDocument` and `DirtyNotifier` are interfaces; the app layer implements them.
 - **Testable.** Every module has unit tests; gestures, commands, and focus are tested without a render context.
+
+## 10. Gap Analysis — Spec vs Implementation
+
+### 10.1 Implementation Gaps (spec describes behavior not yet coded)
+
+#### A. GestureRecognizer: Brush, Scrub, Pinch, Pan not detected
+
+The `GestureRecognizer` enumerates `GestureKind::Brush`, `Scrub`, `Pinch`, and `Pan` but `feed()` never emits them. Only `Tap`, `DoubleTap`, `LongPress`, and `Drag` are implemented.
+
+| Gesture | Plan says | Current behavior |
+|---------|-----------|-----------------|
+| Brush | "range selection on axis" | Enum exists; never emitted |
+| Scrub | "drag value slider" | Enum exists; never emitted |
+| Pinch | "two-finger zoom" | Enum exists; never emitted |
+| Pan | (listed) | Enum exists; never emitted |
+
+**Impact**: Chart brushing, value scrubbing, and multi-touch gestures are unreachable through the gesture pipeline. The `InteractionState` has dead code paths that check for these gesture kinds but will never execute.
+
+#### B. InteractionState: Brush/Scrub handlers are stubs
+
+`InteractionState::process()` contains:
+```cpp
+if (gesture == GestureKind::Brush)
+    return AxisBrushed{ visualId, 0, 0.0, 0.0 };  // hardcoded zeros
+if (gesture == GestureKind::Scrub)
+    return ValueScrubbed{ visualId, 0, 0, 0.0 };   // hardcoded zeros
+```
+
+Even if the gesture recognizer emitted Brush/Scrub, the `PointerEvent` position and delta are discarded. The `AxisBrushed.selectionMin/Max` should be derived from the drag motion along the axis, and `ValueScrubbed.newValue` from the scrub delta.
+
+**Impact**: Even after fixing 10.1.A, the emitted events carry no useful data.
+
+#### C. BindingResolver skips field resolution during notification
+
+The plan (§5) specifies this flow on source change:
+1. `DataGraph::notify(path)` triggers listeners
+2. `BindingResolver` queries `BindingRegistry::affectedVisuals(path)`
+3. `BindingRegistry::resolveForSource(path)` evaluates bindings → `ResolvedField`s
+4. `DirtyNotifier(visualId)` signals re‑compilation
+
+The current `BindingResolver::attach()` implementation skips step 3 — it calls `dirtyNotifier_` for each affected visual but never invokes `registry_->resolveForSource(path)`. The app layer must separately query resolved fields during recompilation.
+
+**Impact**: Not strictly a bug — the resolver correctly notifies which visuals are dirty, and the app can resolve fields on its own schedule. But the plan describes a richer path where resolved fields are available at notification time. This may become relevant for incremental compilation where only specific descriptor fields need patching.
+
+#### D. No view_sync tests
+
+The plan's file layout lists 7 test files. All 7 exist and pass. But `view_sync.cpp` has no test coverage. Adding a `view_sync_test.cpp` would close this coverage gap (testing brush ranges, shared selection, sync propagation, and view filters).
+
+#### E. No edit_ops or hit tests
+
+`edit_ops.cpp` and `hit.cpp` have no dedicated test files. The `IDocument` interface requires a mock for edit commands. `HitResult` resolution could be tested with a trivial mock parent lookup. These were not listed in the plan's test inventory; adding them would improve confidence in chart editing and entity hierarchy traversal.
+
+### 10.2 Specification Gaps (plan is silent on these design decisions)
+
+#### F. InteractionConfig::blocksEventPropagation is unused
+
+The field exists on `InteractionConfig` but nothing reads it. The plan doesn't specify how hit-testing should dispatch events in a visual hierarchy (e.g., should a draggable overlay block events from reaching a chart behind it?). Without this, all visuals at a pixel are candidates for interaction regardless of Z-order.
+
+**Recommendation**: Either add propagation logic to `InteractionState` (skip visuals with `blocksEventPropagation` set when a higher-priority hit consumed the event) or remove the field.
+
+#### G. Error handling for invalid DataGraph paths
+
+The plan doesn't specify behavior for:
+- `setMatrixValue` with negative row/col indices
+- `removeFromSeries` on a non‑existent path
+- `resolveForSource` when the source doesn't exist
+
+The current implementation silently returns / no-ops in these cases. This is probably fine for a data graph, but the contract should be documented.
+
+#### H. GestureRecognizer: no cancel/abort mechanism
+
+The plan mentions `GesturePhase::Cancelled` and `reset()` but no mechanism for the app layer to cancel an in‑progress gesture (e.g., when a system dialog opens or focus changes). `reset()` clears all state including accumulated time, which may not be desirable for a cancel vs a full reset.
+
+**Recommendation**: Add an explicit `cancel()` that transitions to `GesturePhase::Cancelled` without resetting the tap time accumulator.
+
+#### I. CameraPose: no orbit accumulation guard
+
+`orbitCamera()` decomposes the position-target vector into azimuth/elevation, adjusts, and reconstructs. Each call accumulates floating‑point error because the decomposition-then-reconstruction cycle is not exact. Over many frames (e.g., continuous orbit during drag), the `up` vector can drift and the distance can change.
+
+**Recommendation**: Store the orbit state as a stable representation (spherical coordinates or a rotation quaternion) rather than re‑deriving it from the Cartesian position on every call. The surface API stays the same; only internals change.
+
+#### J. BindingRegistry stores DataGraph reference but never holds it
+
+`BindingRegistry` takes a `DataGraph&` in its constructor and stores it, but the reference is only used in `resolveForSource()` and `resolveForVisual()`. If the `DataGraph` outlives the registry (or vice versa), a dangling reference is possible. The plan doesn't specify ownership semantics.
+
+**Recommendation**: Document that the `DataGraph` must outlive all `BindingRegistry` and `BindingResolver` instances, or switch to `shared_ptr`.
+
+#### K. No thread safety notes
+
+The plan says "No threads" in §3 (WASM Compatibility), and the implementation has no synchronization primitives. This is correct for single‑threaded WASM but inconsistent with desktop Composer which may run interaction on the ECS main thread and binding resolution on a worker. The plan should explicitly state the threading model: single‑threaded by design, with caller responsible for any external synchronization.
+
+### 10.3 Design Decisions Requiring Confirmation
+
+#### L. CameraFraming: 2D vs 3D
+
+The `frameBounds()` function has a `use3D` parameter that is unused in the implementation (the `/* use3D */` comment suppresses the warning). The plan mentions "For 3D perspective views, set use3D = true" but the 3D path is not implemented. Is 3D framing deferred to a later phase, or should the parameter be removed until it ships?
+
+#### M. EditTextCommand: mergeOnly consolidation
+
+`EditTextCommand::canMerge` returns true when two commands target the same visual, but there is no time‑based decay on the merge window. Consecutive keystrokes minutes apart would merge, creating an undo unit that collapses a large editing session into one step. The `mergeTimestamp_` field is stored but never checked against wall‑clock time.
+
+**Recommendation**: Either wire the timestamp check (reject merge if `now - mergeTimestamp_ > threshold`) or remove the unused field.
+
+#### N. ViewSync: sync() returns all views with any config flag set
+
+`ViewSync::sync()` returns every view that has `shareSelection`, `shareTime`, any brush range, or any filter — regardless of whether anything actually *changed* since the last call. The plan says "Returns the viewIds that need updating" which implies delta detection.
+
+**Recommendation**: Either track dirty flags per view (set on mutation, clear on `sync()`) or rename the method to `allActiveViews()` to match actual behavior.
+
+### 10.4 Summary
+
+| Severity | Gaps | Effort |
+|----------|------|--------|
+| **High** — core feature missing | A. GestureRecognizer: Brush/Scrub/Pinch/Pan | Medium |
+| **High** — core feature missing | B. InteractionState: Brush/Scrub event data | Small |
+| **Medium** — spec/impl mismatch | C. BindingResolver doesn't resolve during notify | Small |
+| **Medium** — untested module | D. No view_sync tests | Medium |
+| **Low** — untested helpers | E. No edit_ops/hit tests | Medium |
+| **Low** — spec unclear | F. blocksEventPropagation unused | Small |
+| **Low** — spec unclear | G. Error handling contracts | Small |
+| **Low** — missing API | H. GestureRecognizer cancel() | Small |
+| **Low** — precision concern | I. orbitCamera drift | Medium |
+| **Low** — ownership docs | J. DataGraph lifetime | Small |
+| **Low** — documentation | K. Thread safety statement | Small |
+| **Clarify** — defer or remove | L. 3D framing unimplemented | Small |
+| **Clarify** — wire or remove | M. EditTextCommand merge timestamp | Small |
+| **Clarify** — fix or rename | N. ViewSync::sync() delta detection | Small |
